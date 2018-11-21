@@ -42,7 +42,8 @@ def get_meta(meta_name):
 
 
 def get_images(meta, exposure_time, roi):
-    ''' For a given exposure time return 2 arrays of each image taken
+    ''' For a given exposure time return a stack of arrays corresponding
+        to the 2 images taken
     '''
     img1 = np.array(plt.imread(meta[exposure_time][1][0] + ".tif"),
                     dtype=float)
@@ -221,44 +222,36 @@ if __name__ == "__main__":
         meta = get_meta('metadata.txt')
         time_range = len(meta)
 
+# Create a stack of images depending on the exposure time:
+#        img.shape() = (snap, nb_pixel_x, nb_pixel_y)
+
         img = np.asarray([get_images(meta, i, roi)
                           for i in range(time_range)])
 
         img_sum = np.sum(img, axis=3) / 2
-        img_diff = (np.diff(img, axis=3) / np.sqrt(2)).reshape(100, 500, 500)
+        img_diff = (np.diff(img, axis=3) / np.sqrt(2)).reshape(time_range,
+                                                               500,
+                                                               500)
         avr_mat = np.mean(img_sum, axis=(1, 2))
         std_mat = np.std(img_diff, axis=(1, 2))
-
-#        avr_test = np.asarray([get_images_sum(meta, i, roi)
-#                               for i in range(time_range)])
-#        std_test = np.asarray([get_images_diff(meta, i, roi)
-#                               for i in range(time_range)])
-
         exp_time = np.asarray([meta[time][0] for time in range(time_range)])
-#        avr = np.asarray([np.mean(get_images_sum(meta, i, roi))
-#                          for i in range(time_range)])
-#        std = np.asarray([np.std(get_images_diff(meta, i, roi))
-#                          for i in range(time_range)])
-
-
-#        fit_bounds = np.where(np.logical_and(exp_time > 200,
-#                                             exp_time < 1000))
-#        slope_avr, offset_avr = get_fit_parameters(exp_time[fit_bounds],
-#                                                   avr[fit_bounds])
-#        slope_avr, offset_avr = get_fit_parameters(exp_time, avr)
-#        slope_std, offset_std = get_fit_parameters(exp_time, std)
         slope_avr, offset_avr = get_fit_parameters(exp_time, avr_mat)
         slope_std, offset_std = get_fit_parameters(exp_time, std_mat)
 
-        print("Dark current {} ADU".format(np.mean(avr_mat)))
-        print("Std min {} ADU".format(np.min(std_mat)))
-        print("Std max {} ADU".format(np.max(std_mat)))
-        print("Dark temporal noise {} ADU".format(np.mean(std_mat)))
+        dark_current = np.mean(avr_mat)
+        min_std = np.min(std_mat)
+        max_std = np.max(std_mat)
+        dark_temp_noise = np.mean(std_mat)
+
+        print("Dark current {} ADU".format(dark_current))
+        print("Std min {} ADU".format(min_std))
+        print("Std max {} ADU".format(max_std))
+        print("Dark temporal noise {} ADU".format(dark_temp_noise))
 
         os.chdir(output_dir_path)
 
         plot_result(exp_time,
-                    avr,
+                    avr_mat,
                     slope_avr,
                     offset_avr,
                     'meanVsExposure_roi'+str(roi)+'.png',
@@ -267,7 +260,7 @@ if __name__ == "__main__":
                     "Mean [ADU]")
 
         plot_result(exp_time,
-                    std,
+                    std_mat,
                     slope_std,
                     offset_std,
                     'standardDeviationVsExposure_roi'+str(roi)+'.png',
