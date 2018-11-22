@@ -4,6 +4,8 @@ import os
 import argparse
 import matplotlib.pyplot as plt
 import numpy as np
+from docx import Document
+from docx.shared import Inches
 
 
 def get_metadata(metadata):
@@ -51,94 +53,8 @@ def get_images(meta, exposure_time, roi):
                     dtype=float)
     img = np.dstack((img1[roi:-roi, roi:-roi],
                      img2[roi:-roi, roi:-roi]))
-#    img = img1 - img2
 
-#    return img1[roi:-roi, roi:-roi], img2[roi:-roi, roi:-roi]
     return img
-
-
-def get_images_diff(meta, exposure_time, roi):
-    '''Blabla
-    '''
-
-    img1 = np.array(plt.imread(meta[exposure_time][1][0] + ".tif"),
-                    dtype=float)
-    img2 = np.array(plt.imread(meta[exposure_time][1][1] + ".tif"),
-                    dtype=float)
-    img = (img1 - img2) / np.sqrt(2)
-
-    return img[roi:-roi, roi:-roi]
-
-
-def get_images_sum(meta, exposure_time, roi):
-    ''' Blabla
-    '''
-
-    img1 = np.array(plt.imread(meta[exposure_time][1][0] + ".tif"),
-                    dtype=float)
-    img2 = np.array(plt.imread(meta[exposure_time][1][1] + ".tif"),
-                    dtype=float)
-    img = (img1 + img2) / 2
-
-    return img[roi:-roi, roi:-roi]
-
-
-def get_images_PTC_sum(input_dir_path, exposure_time, roi):
-    ''' Blabla
-    '''
-
-    # Get dark images
-    os.chdir(input_dir_path + '/Dark')
-    meta = get_meta('metadata.txt')
-    img_dark1 = np.array(plt.imread(meta[exposure_time][1][0] + '.tif'),
-                         dtype=float)
-    img_dark2 = np.array(plt.imread(meta[exposure_time][1][1] + '.tif'),
-                         dtype=float)
-
-    # Get light images
-    os.chdir(input_dir_path + '/Light')
-    meta = get_meta('metadata.txt')
-    img_light1 = np.array(plt.imread(meta[exposure_time][1][0] + '.tif'),
-                          dtype=float)
-    img_light2 = np.array(plt.imread(meta[exposure_time][1][1] + '.tif'),
-                          dtype=float)
-
-    # Remove Dark from Light
-    img1 = img_light1 - img_dark1
-    img2 = img_light2 - img_dark2
-
-    img_sum = (img1 + img2) / 2
-
-    return img_sum[roi:-roi, roi:-roi]
-
-
-def get_images_PTC_diff(input_dir_path, exposure_time, roi):
-    ''' Blabla
-    '''
-
-    # Get dark images
-    os.chdir(input_dir_path + '/Dark')
-    meta = get_meta('metadata.txt')
-    img_dark1 = np.array(plt.imread(meta[exposure_time][1][0] + '.tif'),
-                         dtype=float)
-    img_dark2 = np.array(plt.imread(meta[exposure_time][1][1] + '.tif'),
-                         dtype=float)
-
-    # Get light images
-    os.chdir(input_dir_path + '/Light')
-    meta = get_meta('metadata.txt')
-    img_light1 = np.array(plt.imread(meta[exposure_time][1][0] + '.tif'),
-                          dtype=float)
-    img_light2 = np.array(plt.imread(meta[exposure_time][1][1] + '.tif'),
-                          dtype=float)
-
-    # Remove Dark from Light
-    img1 = img_light1 - img_dark1
-    img2 = img_light2 - img_dark2
-
-    img_diff = (img1 - img2) / np.sqrt(2)
-
-    return img_diff[roi:-roi, roi:-roi]
 
 
 def plot_result(x, y, m, c, out_fname, title, label_x, label_y):
@@ -211,105 +127,296 @@ if __name__ == "__main__":
                               horizontally.')
 
     args = parser.parse_args()
-
+    input_dir_path = args.input_dir_path
     output_dir_path = args.output_dir_path
-    measurement_type = args.measurement_type
+#    measurement_type = args.measurement_type
     roi = args.roi
 
-    if measurement_type == 'Dark':
-        input_dir_path = args.input_dir_path
-        os.chdir(input_dir_path)
-        meta = get_meta('metadata.txt')
-        time_range = len(meta)
+    doc = Document()
+
+# Start with characterisation of dark measurements
+    measurement_type = 'Dark'
+    os.chdir(input_dir_path + '/Dark')
+    meta = get_meta('metadata.txt')
+    time_range = len(meta)
+    pic_dim = int(2048 - 2 * roi)
+    print('picture_dimensions {}'.format(pic_dim))
 
 # Create a stack of images depending on the exposure time:
 #        img.shape() = (snap, nb_pixel_x, nb_pixel_y)
+    img = np.asarray([get_images(meta, i, roi)
+                      for i in range(time_range)])
 
-        img = np.asarray([get_images(meta, i, roi)
-                          for i in range(time_range)])
+    img_sum = np.sum(img, axis=3) / 2
+    img_diff = (np.diff(img, axis=3) / np.sqrt(2)).reshape(time_range,
+                                                           pic_dim,
+                                                           pic_dim)
+    avr_mat = np.mean(img_sum, axis=(1, 2))
+    std_mat = np.std(img_diff, axis=(1, 2))
+    exp_time = np.asarray([meta[time][0] for time in range(time_range)])
+    slope_avr, offset_avr = get_fit_parameters(exp_time, avr_mat)
+    slope_std, offset_std = get_fit_parameters(exp_time, std_mat)
 
-        img_sum = np.sum(img, axis=3) / 2
-        img_diff = (np.diff(img, axis=3) / np.sqrt(2)).reshape(time_range,
-                                                               500,
-                                                               500)
-        avr_mat = np.mean(img_sum, axis=(1, 2))
-        std_mat = np.std(img_diff, axis=(1, 2))
-        exp_time = np.asarray([meta[time][0] for time in range(time_range)])
-        slope_avr, offset_avr = get_fit_parameters(exp_time, avr_mat)
-        slope_std, offset_std = get_fit_parameters(exp_time, std_mat)
+# Calculate dark parameter and print plots
+    dark_current = np.mean(avr_mat)
+    min_std = np.min(std_mat)
+    max_std = np.max(std_mat)
+    dark_tmp_noise = np.mean(std_mat)
 
-        dark_current = np.mean(avr_mat)
-        min_std = np.min(std_mat)
-        max_std = np.max(std_mat)
-        dark_temp_noise = np.mean(std_mat)
+    print("Dark current {0:.2f} ADU".format(dark_current))
+    print("Std min {0:.2f} ADU".format(min_std))
+    print("Std max {0:.2f} ADU".format(max_std))
+    print("Dark temporal noise {0:.2f} ADU".format(dark_tmp_noise))
 
-        print("Dark current {} ADU".format(dark_current))
-        print("Std min {} ADU".format(min_std))
-        print("Std max {} ADU".format(max_std))
-        print("Dark temporal noise {} ADU".format(dark_temp_noise))
+    fig_mean_vs_timing = 'meanVsExposure_roi' + str(roi) + '.png'
+    fig_std_vs_timing = 'standardDeviationVsExposure_roi' + str(roi) + '.png'
+    os.chdir(output_dir_path)
 
-        os.chdir(output_dir_path)
+    plot_result(exp_time,
+                avr_mat,
+                slope_avr,
+                offset_avr,
+                fig_mean_vs_timing,
+                "Mean of the dark VS exposure time",
+                "Exposure time [ms]",
+                "Mean [ADU]")
 
-        plot_result(exp_time,
-                    avr_mat,
-                    slope_avr,
-                    offset_avr,
-                    'meanVsExposure_roi'+str(roi)+'.png',
-                    "Mean of the dark VS exposure time",
-                    "Exposure time [ms]",
-                    "Mean [ADU]")
+    plot_result(exp_time,
+                std_mat,
+                slope_std,
+                offset_std,
+                fig_std_vs_timing,
+                "Standard deviation of the dark VS exposure time",
+                "Exposure time [ms]",
+                "Standard deviation [ADU]")
 
-        plot_result(exp_time,
-                    std_mat,
-                    slope_std,
-                    offset_std,
-                    'standardDeviationVsExposure_roi'+str(roi)+'.png',
-                    "Standard deviation of the dark VS exposure time",
-                    "Exposure time [ms]",
-                    "Standard deviation [ADU]")
+# PTC
+    measurement_type = 'PTC'
+    input_dir_path_PTC = input_dir_path + '/PTC'
 
-    if measurement_type == 'PTC':
-        input_dir_path = args.input_dir_path
+    input_dir_path_light = input_dir_path_PTC + "/Light"
+    input_dir_path_dark = input_dir_path_PTC + "/Dark"
 
-        input_dir_path_light = input_dir_path + "/Light"
-        input_dir_path_dark = input_dir_path + "/Dark"
-        os.chdir(input_dir_path_light)
-        meta_light = get_meta("metadata.txt")
-        os.chdir(input_dir_path_dark)
-        meta_dark = get_meta("metadata.txt")
-        time_range = len(meta_light)
-
-        img_sum = np.array([get_images_PTC_sum(input_dir_path,
-                                               snap,
-                                               roi)
+    os.chdir(input_dir_path_light)
+    meta_light = get_meta("metadata.txt")
+    time_range = len(meta_light)
+    img_light = np.asarray([get_images(meta_light, snap, roi)
                             for snap in range(time_range)])
-        img_diff = np.array([get_images_PTC_diff(input_dir_path,
-                                                 snap,
-                                                 roi)
-                             for snap in range(time_range)])
 
-        img_std = np.var(img_diff, axis=(1, 2), ddof=1) - 6*6
-        img_avr = np.mean(img_sum, axis=(1, 2))
+    os.chdir(input_dir_path_dark)
+    meta_dark = get_meta("metadata.txt")
+    time_range = len(meta_dark)
+    img_dark = np.asarray([get_images(meta_dark, snap, roi)
+                           for snap in range(time_range)])
+    img_ptc = img_light - img_dark
+    img_sum_ptc = np.sum(img_ptc, axis=3)/2
+    img_diff_ptc = (np.diff(img_ptc, axis=3) / np.sqrt(2)).reshape(time_range,
+                                                                   pic_dim,
+                                                                   pic_dim)
+    img_std_ptc = np.var(img_diff_ptc, axis=(1, 2), ddof=1)
+    img_avr_ptc = np.mean(img_sum_ptc, axis=(1, 2))
 
-        fit_bounds = np.where(np.logical_and(img_avr > 0,
-                                             img_avr < 50000))
-        slope, offset = get_fit_parameters(img_avr[fit_bounds],
-                                           img_std[fit_bounds])
-        print("Max of variance {} ADU^2".format(np.max(img_std)))
-        saturation_adu = img_avr[img_std == np.max(img_std)]
-        saturation_electron = saturation_adu / slope
-        max_snr = np.log2(np.sqrt(saturation_electron))
-        print("Saturation {} ADU".format(saturation_adu))
-        print("Saturation {} electrons".format(saturation_electron))
-        print("Max SNR {}".format(max_snr))
-        print(slope, offset)
-        os.chdir(output_dir_path)
+    fit_bounds = np.where(np.logical_and(img_avr_ptc > 0,
+                                         img_avr_ptc < 50000))
+    slope, offset = get_fit_parameters(img_avr_ptc[fit_bounds],
+                                       img_std_ptc[fit_bounds])
 
-        plot_result(img_avr,
-                    img_std,
-                    slope,
-                    offset,
-                    'stdVsMeanLight_roi'+str(roi)+'.png',
-                    'Transfer curve',
-                    'Mean value [ADU]',
-                    'Variance [ADU^2]')
+    saturation_adu = img_avr_ptc[img_std_ptc == np.max(img_std_ptc)]
+    saturation_electron = saturation_adu / slope
+    max_snr = np.log2(np.sqrt(saturation_electron))
+    gain = dark_tmp_noise / slope
+
+    print("Max of variance {0:.2f} ADU^2".format(np.max(img_std_ptc)))
+    print("Saturation {0:.2f} ADU".format(saturation_adu[0]))
+    print("Saturation {0:.2f} electrons".format(saturation_electron[0]))
+    print("Max SNR {0:.2f}".format(max_snr[0]))
+    print(slope, offset)
+
+    os.chdir(output_dir_path)
+
+    plot_result(img_avr_ptc,
+                img_std_ptc,
+                slope,
+                offset,
+                'stdVsMeanLight_roi'+str(roi)+'.png',
+                'Transfer curve',
+                'Mean value [ADU]',
+                'Variance [ADU^2]')
+
+    doc.add_heading('Low gain characeterisation', 0)
+    doc.add_heading('Dark measurements', level=1)
+    doc.add_paragraph('Size of ROI: {}x{} pixels'.format(roi, roi))
+    doc.add_picture('meanVsExposure_roi'+str(roi)+'.png')
+    doc.add_paragraph('Fitting results:')
+    doc.add_paragraph('Dark current per second'
+                      ' {0:.2f} ADU/s'.format(slope_avr*1000),
+                      style='List Bullet')
+    doc.add_paragraph('Dark current {0:.2f} ADU'.format(dark_current),
+                      style='List Bullet')
+    doc.add_paragraph('Below is shown the standard deviation of the dark'
+                      ' (in ADU) as a function of the exposure time'
+                      ' (in milliseconds)')
+    doc.add_picture('standardDeviationVsExposure_roi'+str(roi)+'.png')
+    doc.add_paragraph('Dark temporal noise'
+                      ' {0:.2f} ADU'.format(dark_tmp_noise),
+                      style='List Bullet')
+    doc.add_paragraph('Standard deviation min {0:.2f} ADU'.format(min_std),
+                      style='List Bullet')
+    doc.add_paragraph('Standard deviation max {0:.2f} ADU'.format(max_std),
+                      style='List Bullet')
+
+    doc.add_heading('PTC measurements', level=1)
+    doc.add_picture('stdVsMeanLight_roi'+str(roi)+'.png')
+    doc.add_paragraph('Results of PTC measurement:')
+    doc.add_paragraph('Gain {0:.2f} ADU/e-'.format(slope),
+                      style='List Bullet')
+    doc.add_paragraph('Saturation {0:.2f} ADU'.format(saturation_adu[0]),
+                      style='List Bullet')
+    doc.add_paragraph('Saturation {0:.2f} e-'.format(saturation_electron[0]),
+                      style='List Bullet')
+    doc.add_paragraph('Max SNR {0:.2f} bit'.format(max_snr[0]),
+                      style='List Bullet')
+    doc.add_paragraph('Temporal dark noise {0:.2f} e-'.format(gain),
+                      style='List Bullet')
+    table = doc.add_table(rows=4, cols=2)
+    cell = table.cell(0, 0)
+    cell.text = 'Parameter'
+    cell = table.cell(0, 1)
+    cell.text = 'Low Gain'
+    cell = table.cell(1, 0)
+    cell.text = 'Overall gain (DN/e-)'
+    cell = table.cell(1, 1)
+    cell.text = '{}'.format(gain)
+    cell = table.cell(2, 0)
+    cell.text = 'Saturation (e-)'
+    cell = table.cell(2, 1)
+    cell.text = '{}'.format(saturation_electron[0])
+    cell = table.cell(3, 0)
+    cell.text = 'Dark current (ADU)'
+    cell = table.cell(3, 1)
+    cell.text = '{}'.format(dark_current)
+
+    doc.save('lowGain_roi'+str(roi)+'.docx')
+
+#    if measurement_type == 'Dark':
+#        os.chdir(input_dir_path)
+#        meta = get_meta('metadata.txt')
+#        time_range = len(meta)
+#
+## Create a stack of images depending on the exposure time:
+##        img.shape() = (snap, nb_pixel_x, nb_pixel_y)
+#
+#        img = np.asarray([get_images(meta, i, roi)
+#                          for i in range(time_range)])
+#
+#        img_sum = np.sum(img, axis=3) / 2
+#        img_diff = (np.diff(img, axis=3) / np.sqrt(2)).reshape(time_range,
+#                                                               500,
+#                                                               500)
+#        avr_mat = np.mean(img_sum, axis=(1, 2))
+#        std_mat = np.std(img_diff, axis=(1, 2))
+#        exp_time = np.asarray([meta[time][0] for time in range(time_range)])
+#        slope_avr, offset_avr = get_fit_parameters(exp_time, avr_mat)
+#        slope_std, offset_std = get_fit_parameters(exp_time, std_mat)
+#
+## Calculate dark parameter and print plots
+#
+#        dark_current = np.mean(avr_mat)
+#        min_std = np.min(std_mat)
+#        max_std = np.max(std_mat)
+#        dark_tmp_noise = np.mean(std_mat)
+#
+#        print("Dark current {0:.2f} ADU".format(dark_current))
+#        print("Std min {0:.2f} ADU".format(min_std))
+#        print("Std max {0:.2f} ADU".format(max_std))
+#        print("Dark temporal noise {0:.2f} ADU".format(dark_tmp_noise))
+#
+#        os.chdir(output_dir_path)
+#
+#        plot_result(exp_time,
+#                    avr_mat,
+#                    slope_avr,
+#                    offset_avr,
+#                    'meanVsExposure_roi'+str(roi)+'.png',
+#                    "Mean of the dark VS exposure time",
+#                    "Exposure time [ms]",
+#                    "Mean [ADU]")
+#
+#        plot_result(exp_time,
+#                    std_mat,
+#                    slope_std,
+#                    offset_std,
+#                    'standardDeviationVsExposure_roi'+str(roi)+'.png',
+#                    "Standard deviation of the dark VS exposure time",
+#                    "Exposure time [ms]",
+#                    "Standard deviation [ADU]")
+
+# Saving plots and value in a word document
+#
+#        doc.add_picture('meanVsExposure_roi'+str(roi)+'.png')
+#        doc.add_paragraph('Fitting results:')
+#        doc.add_paragraph('Dark current per second'
+#                          ' {0:.2f} ADU/s'.format(slope_avr*1000),
+#                          style='List Bullet')
+#        doc.add_paragraph('Dark current {0:.2f} ADU'.format(dark_current),
+#                          style='List Bullet')
+#        doc.add_paragraph('Below is shown the standard deviation of the dark'
+#                          '(in ADU) as a function of the exposure time'
+#                          '(in milliseconds)')
+#        doc.add_picture('standardDeviationVsExposure_roi'+str(roi)+'.png')
+#        doc.add_paragraph('Dark temporal noise'
+#                          ' {0:.2f} ADU'.format(dark_tmp_noise),
+#                          style='List Bullet')
+#        doc.add_paragraph('Standard deviation min {0:.2f} ADU'.format(min_std),
+#                          style='List Bullet')
+#        doc.add_paragraph('Standard deviation max {0:.2f} ADU'.format(max_std),
+#                          style='List Bullet')
+#        doc.save('test.docx')
+#
+#    if measurement_type == 'PTC':
+#        input_dir_path = args.input_dir_path
+#
+#        input_dir_path_light = input_dir_path + "/Light"
+#        input_dir_path_dark = input_dir_path + "/Dark"
+#
+#        os.chdir(input_dir_path_light)
+#        meta_light = get_meta("metadata.txt")
+#        time_range = len(meta_light)
+#        img_light = np.asarray([get_images(meta_light, snap, roi)
+#                                for snap in range(time_range)])
+#
+#        os.chdir(input_dir_path_dark)
+#        meta_dark = get_meta("metadata.txt")
+#        time_range = len(meta_dark)
+#        img_dark = np.asarray([get_images(meta_dark, snap, roi)
+#                               for snap in range(time_range)])
+#        img = img_light - img_dark
+#        img_sum = np.sum(img, axis=3)/2
+#        img_diff = (np.diff(img, axis=3) / np.sqrt(2)).reshape(time_range,
+#                                                               500,
+#                                                               500)
+#        img_std = np.var(img_diff, axis=(1, 2), ddof=1)
+#        img_avr = np.mean(img_sum, axis=(1, 2))
+#
+#        fit_bounds = np.where(np.logical_and(img_avr > 0,
+#                                             img_avr < 50000))
+#        slope, offset = get_fit_parameters(img_avr[fit_bounds],
+#                                           img_std[fit_bounds])
+#        print("Max of variance {0:.2f} ADU^2".format(np.max(img_std)))
+#        saturation_adu = img_avr[img_std == np.max(img_std)]
+#        saturation_electron = saturation_adu / slope
+#        max_snr = np.log2(np.sqrt(saturation_electron))
+#        print("Saturation {0:.2f} ADU".format(saturation_adu[0]))
+#        print("Saturation {0:.2f} electrons".format(saturation_electron[0]))
+#        print("Max SNR {0:.2f}".format(max_snr[0]))
+#        print(slope, offset)
+#        os.chdir(output_dir_path)
+#
+#        plot_result(img_avr,
+#                    img_std,
+#                    slope,
+#                    offset,
+#                    'stdVsMeanLight_roi'+str(roi)+'.png',
+#                    'Transfer curve',
+#                    'Mean value [ADU]',
+#                    'Variance [ADU^2]')
