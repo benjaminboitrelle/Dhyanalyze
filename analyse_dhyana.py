@@ -5,7 +5,7 @@ import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 from docx import Document
-from docx.shared import Inches
+#from docx.shared import Inches
 
 
 def get_metadata(metadata):
@@ -111,10 +111,10 @@ if __name__ == "__main__":
                         type=str,
                         help='Path to the output directory')
 
-    parser.add_argument('--type',
-                        dest='measurement_type',
+    parser.add_argument('--gain',
+                        dest='gain_mode',
                         type=str,
-                        help='Type of measurements: \n Dark \n PTC')
+                        help='Type of gain: \n HDR \n High gain \n Low gain')
 
     parser.add_argument('--roi',
                         dest='roi',
@@ -129,23 +129,22 @@ if __name__ == "__main__":
     args = parser.parse_args()
     input_dir_path = args.input_dir_path
     output_dir_path = args.output_dir_path
-#    measurement_type = args.measurement_type
+    gain_mode = args.gain_mode
     roi = args.roi
 
     doc = Document()
 
 # Start with characterisation of dark measurements
     measurement_type = 'Dark'
-    os.chdir(input_dir_path + '/Dark')
+    os.chdir(input_dir_path + '/Dark/LowGain')
     meta = get_meta('metadata.txt')
     time_range = len(meta)
     pic_dim = int(2048 - 2 * roi)
-    print('picture_dimensions {}'.format(pic_dim))
 
 # Create a stack of images depending on the exposure time:
 #        img.shape() = (snap, nb_pixel_x, nb_pixel_y)
-    img = np.asarray([get_images(meta, i, roi)
-                      for i in range(time_range)])
+    img = np.asarray([get_images(meta, snap, roi)
+                      for snap in range(time_range)])
 
     img_sum = np.sum(img, axis=3) / 2
     img_diff = (np.diff(img, axis=3) / np.sqrt(2)).reshape(time_range,
@@ -194,8 +193,8 @@ if __name__ == "__main__":
     measurement_type = 'PTC'
     input_dir_path_PTC = input_dir_path + '/PTC'
 
-    input_dir_path_light = input_dir_path_PTC + "/Light"
-    input_dir_path_dark = input_dir_path_PTC + "/Dark"
+    input_dir_path_light = input_dir_path_PTC + '/Light'
+    input_dir_path_dark = input_dir_path_PTC + '/Dark'
 
     os.chdir(input_dir_path_light)
     meta_light = get_meta("metadata.txt")
@@ -243,40 +242,40 @@ if __name__ == "__main__":
                 'Mean value [ADU]',
                 'Variance [ADU^2]')
 
-    doc.add_heading('Low gain characeterisation', 0)
+    doc.add_heading('{} characeterisation'.format(gain_mode), 0)
     doc.add_heading('Dark measurements', level=1)
     doc.add_paragraph('Size of ROI: {}x{} pixels'.format(roi, roi))
-    doc.add_picture('meanVsExposure_roi'+str(roi)+'.png')
+    doc.add_picture(fig_mean_vs_timing)
     doc.add_paragraph('Fitting results:')
-    doc.add_paragraph('Dark current per second'
+    doc.add_paragraph('Dark current per second:'
                       ' {0:.2f} ADU/s'.format(slope_avr*1000),
                       style='List Bullet')
-    doc.add_paragraph('Dark current {0:.2f} ADU'.format(dark_current),
+    doc.add_paragraph('Dark current: {0:.2f} ADU'.format(dark_current),
                       style='List Bullet')
     doc.add_paragraph('Below is shown the standard deviation of the dark'
                       ' (in ADU) as a function of the exposure time'
                       ' (in milliseconds)')
-    doc.add_picture('standardDeviationVsExposure_roi'+str(roi)+'.png')
-    doc.add_paragraph('Dark temporal noise'
+    doc.add_picture(fig_std_vs_timing)
+    doc.add_paragraph('Dark temporal noise:'
                       ' {0:.2f} ADU'.format(dark_tmp_noise),
                       style='List Bullet')
-    doc.add_paragraph('Standard deviation min {0:.2f} ADU'.format(min_std),
+    doc.add_paragraph('Standard deviation min: {0:.2f} ADU'.format(min_std),
                       style='List Bullet')
-    doc.add_paragraph('Standard deviation max {0:.2f} ADU'.format(max_std),
+    doc.add_paragraph('Standard deviation max: {0:.2f} ADU'.format(max_std),
                       style='List Bullet')
 
     doc.add_heading('PTC measurements', level=1)
     doc.add_picture('stdVsMeanLight_roi'+str(roi)+'.png')
     doc.add_paragraph('Results of PTC measurement:')
-    doc.add_paragraph('Gain {0:.2f} ADU/e-'.format(slope),
+    doc.add_paragraph('Gain: {0:.2f} ADU/e-'.format(slope),
                       style='List Bullet')
-    doc.add_paragraph('Saturation {0:.2f} ADU'.format(saturation_adu[0]),
+    doc.add_paragraph('Saturation: {0:.2f} ADU'.format(saturation_adu[0]),
                       style='List Bullet')
-    doc.add_paragraph('Saturation {0:.2f} e-'.format(saturation_electron[0]),
+    doc.add_paragraph('Saturation: {0:.2f} e-'.format(saturation_electron[0]),
                       style='List Bullet')
-    doc.add_paragraph('Max SNR {0:.2f} bit'.format(max_snr[0]),
+    doc.add_paragraph('Max SNR: {0:.2f} bit'.format(max_snr[0]),
                       style='List Bullet')
-    doc.add_paragraph('Temporal dark noise {0:.2f} e-'.format(gain),
+    doc.add_paragraph('Temporal dark noise: {0:.2f} e-'.format(gain),
                       style='List Bullet')
     table = doc.add_table(rows=4, cols=2)
     cell = table.cell(0, 0)
@@ -296,4 +295,5 @@ if __name__ == "__main__":
     cell = table.cell(3, 1)
     cell.text = '{}'.format(dark_current)
 
-    doc.save('lowGain_roi'+str(roi)+'.docx')
+    word_file = gain_mode + '_roi' + str(roi) + '.docx'
+    doc.save(word_file)
